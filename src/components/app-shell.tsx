@@ -1,5 +1,6 @@
 "use client";
 
+import { AuthStatus } from "./auth-status";
 import { BoardIcon, PlusIcon, SunIcon } from "./icons";
 
 interface AppShellProps {
@@ -30,9 +31,7 @@ export function AppShell({ view, onViewChange, onCreate, children }: AppShellPro
           </button>
         </nav>
 
-        <button className="primary-button header-create" onClick={onCreate}>
-          <PlusIcon />新增投递
-        </button>
+        <AuthStatus />
       </header>
 
       <main>{children}</main>

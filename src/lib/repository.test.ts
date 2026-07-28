@@ -7,8 +7,8 @@ describe("LocalStorageApplicationRepository", () => {
 
   beforeEach(() => localStorage.clear());
 
-  it("首次使用时提供两条示例投递", () => {
-    const data = repository.load();
+  it("首次使用时提供两条示例投递", async () => {
+    const data = await repository.load();
 
     expect(data.applications).toHaveLength(2);
     expect(data.events).toHaveLength(3);
@@ -26,14 +26,14 @@ describe("LocalStorageApplicationRepository", () => {
     expect(data.applications[1].nextActionAt).toBe("2026-07-25T06:00:00.000Z");
   });
 
-  it("保存并重新读取数据", () => {
+  it("保存并重新读取数据", async () => {
     const data: JobTrailData = { version: 1, applications: [], events: [] };
-    repository.save(data);
-    expect(repository.load()).toEqual(data);
+    await repository.save(data);
+    await expect(repository.load()).resolves.toEqual(data);
   });
 
-  it("损坏的数据回退为空数据", () => {
+  it("损坏的数据回退为空数据", async () => {
     localStorage.setItem(STORAGE_KEY, "not-json");
-    expect(repository.load()).toEqual({ version: 1, applications: [], events: [] });
+    await expect(repository.load()).resolves.toEqual({ version: 1, applications: [], events: [] });
   });
 });

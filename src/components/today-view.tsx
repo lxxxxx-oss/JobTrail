@@ -8,7 +8,6 @@ import { priorityOrder } from "@/lib/stages";
 import type { Application } from "@/lib/types";
 import { ArrowIcon, CalendarIcon, PlusIcon } from "./icons";
 import { EmptyState } from "./empty-state";
-import { StageBadge } from "./stage-badge";
 
 const timingLabels = {
   overdue: "已逾期",
@@ -17,7 +16,7 @@ const timingLabels = {
   later: "稍后",
 };
 
-export function TodayView({ onCreate, onSelect, onOpenBoard }: { onCreate(): void; onSelect(id: string): void; onOpenBoard(): void }) {
+export function TodayView({ onCreate, onSelect }: { onCreate(): void; onSelect(id: string): void }) {
   const { applications, events, hydrated } = useApplications();
   const metrics = useMemo(() => calculateMetrics(applications, events), [applications, events]);
   const tasks = useMemo(
@@ -30,9 +29,10 @@ export function TodayView({ onCreate, onSelect, onOpenBoard }: { onCreate(): voi
         }),
     [applications],
   );
-  const visibleTasks = tasks.filter((item) => getTaskTiming(item.nextActionAt!) !== "later");
-  const recentApplications = [...applications].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 4);
-
+  const visibleTasks = useMemo(
+    () => tasks.filter((item) => getTaskTiming(item.nextActionAt!) !== "later"),
+    [tasks],
+  );
   if (!hydrated) return <div className="page-container"><div className="loading-card" /></div>;
 
   return (
@@ -72,22 +72,6 @@ export function TodayView({ onCreate, onSelect, onOpenBoard }: { onCreate(): voi
               ) : (
                 <div className="soft-empty"><CalendarIcon /><p>未来 7 天暂无待办</p><span>给投递设置下一步，避免错过跟进。</span></div>
               )}
-            </section>
-
-            <section className="panel recent-panel">
-              <div className="section-heading">
-                <div><p className="eyebrow">Recently updated</p><h2>最近推进</h2></div>
-                <button className="text-button" onClick={onOpenBoard}>查看看板 <ArrowIcon /></button>
-              </div>
-              <div className="recent-list">
-                {recentApplications.map((application) => (
-                  <button key={application.id} className="recent-row" onClick={() => onSelect(application.id)}>
-                    <span className="company-avatar">{application.company.slice(0, 1).toUpperCase()}</span>
-                    <span className="recent-main"><strong>{application.company}</strong><small>{application.role}</small></span>
-                    <StageBadge stage={application.currentStage} compact />
-                  </button>
-                ))}
-              </div>
             </section>
           </div>
         </>

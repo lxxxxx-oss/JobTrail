@@ -1,17 +1,23 @@
 "use client";
 
+import { useRef } from "react";
 import { useMemo, useState } from "react";
 import { useApplications } from "@/lib/application-store";
+import { downloadJsonBackup, parseJobTrailBackup } from "@/lib/backup";
 import { formatDate } from "@/lib/date";
+import { exportApplicationsToExcel } from "@/lib/export-excel";
 import { priorityLabels, priorityOrder, stageDefinitions } from "@/lib/stages";
 import type { ApplicationStage } from "@/lib/types";
-import { BriefcaseIcon, CalendarIcon, PlusIcon, SearchIcon } from "./icons";
+import { BriefcaseIcon, CalendarIcon, DownloadIcon, PlusIcon, SearchIcon, UploadIcon } from "./icons";
 import { EmptyState } from "./empty-state";
 
 export function BoardView({ onCreate, onSelect }: { onCreate(): void; onSelect(id: string): void }) {
-  const { applications, hydrated, changeStage } = useApplications();
+  const { applications, events, hydrated, changeStage, replaceData } = useApplications();
   const [query, setQuery] = useState("");
   const [stageFilter, setStageFilter] = useState<ApplicationStage | "all">("all");
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+  const restoreInputRef = useRef<HTMLInputElement | null>(null);
   const normalizedQuery = query.trim().toLowerCase();
   const filtered = useMemo(
     () =>
@@ -23,6 +29,35 @@ export function BoardView({ onCreate, onSelect }: { onCreate(): void; onSelect(i
     [applications, normalizedQuery, stageFilter],
   );
   const visibleStages = stageFilter === "all" ? stageDefinitions : stageDefinitions.filter((stage) => stage.id === stageFilter);
+
+  async function handleExport() {
+    setIsExporting(true);
+    setExportError(null);
+    try {
+      await exportApplicationsToExcel(applications, events);
+    } catch (error) {
+      console.error(error);
+      setExportError("导出失败，请稍后重试。");
+    } finally {
+      setIsExporting(false);
+    }
+  }
+
+  async function handleRestore(file: File | undefined) {
+    if (!file) return;
+    setExportError(null);
+    try {
+      const backup = parseJobTrailBackup(await file.text());
+      const confirmed = window.confirm("恢复备份会覆盖当前所有投递记录和时间线，确定继续吗？");
+      if (!confirmed) return;
+      await replaceData(backup);
+    } catch (error) {
+      console.error(error);
+      setExportError("恢复失败，请选择有效的投程备份文件。");
+    } finally {
+      if (restoreInputRef.current) restoreInputRef.current.value = "";
+    }
+  }
 
   if (!hydrated) return <div className="page-container"><div className="loading-card" /></div>;
 
@@ -44,6 +79,37 @@ export function BoardView({ onCreate, onSelect }: { onCreate(): void; onSelect(i
               {stageDefinitions.map((stage) => <option key={stage.id} value={stage.id}>{stage.label}</option>)}
             </select>
             <span className="result-count">{filtered.length} 条记录</span>
+            <button
+              className="secondary-button compact export-button"
+              type="button"
+              onClick={() => void handleExport()}
+              disabled={isExporting || applications.length === 0}
+            >
+              <DownloadIcon />{isExporting ? "导出中" : "导出 Excel"}
+            </button>
+            <button
+              className="secondary-button compact backup-button"
+              type="button"
+              onClick={() => downloadJsonBackup({ version: 1, applications, events })}
+              disabled={applications.length === 0}
+            >
+              <DownloadIcon />备份 JSON
+            </button>
+            <button
+              className="secondary-button compact backup-button"
+              type="button"
+              onClick={() => restoreInputRef.current?.click()}
+            >
+              <UploadIcon />恢复备份
+            </button>
+            <input
+              ref={restoreInputRef}
+              className="visually-hidden"
+              type="file"
+              accept="application/json,.json"
+              onChange={(event) => void handleRestore(event.target.files?.[0])}
+            />
+            {exportError && <span className="export-error">{exportError}</span>}
           </div>
 
           {filtered.length === 0 ? (

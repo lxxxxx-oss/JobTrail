@@ -37,7 +37,7 @@ function JobTrailApp() {
   return (
     <AppShell view={view} onViewChange={setView} onCreate={openCreate}>
       {view === "today" ? (
-        <TodayView onCreate={openCreate} onSelect={setSelectedId} onOpenBoard={() => setView("board")} />
+        <TodayView onCreate={openCreate} onSelect={setSelectedId} />
       ) : (
         <BoardView onCreate={openCreate} onSelect={setSelectedId} />
       )}

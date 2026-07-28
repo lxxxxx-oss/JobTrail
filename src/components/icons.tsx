@@ -61,3 +61,11 @@ export function LinkIcon(props: IconProps) {
 export function NoteIcon(props: IconProps) {
   return <IconBase {...props}><path d="M5 3h14v18l-7-4-7 4V3Z" /></IconBase>;
 }
+
+export function DownloadIcon(props: IconProps) {
+  return <IconBase {...props}><path d="M12 3v12M7 10l5 5 5-5M5 21h14" /></IconBase>;
+}
+
+export function UploadIcon(props: IconProps) {
+  return <IconBase {...props}><path d="M12 21V9M7 14l5-5 5 5M5 3h14" /></IconBase>;
+}

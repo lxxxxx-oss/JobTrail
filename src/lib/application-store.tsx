@@ -1,7 +1,12 @@
 "use client";
 
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { LocalStorageApplicationRepository } from "./repository";
+import { createSupabaseBrowserClient } from "./supabase";
+import {
+  LocalStorageApplicationRepository,
+  SupabaseApplicationRepository,
+  type ApplicationRepository,
+} from "./repository";
 import type {
   Application,
   ApplicationEvent,
@@ -12,11 +17,19 @@ import type {
 
 interface ApplicationContextValue extends JobTrailData {
   hydrated: boolean;
+  authMessage: string | null;
+  dataSource: "local" | "supabase";
+  isSupabaseConfigured: boolean;
+  userEmail: string | null;
   createApplication(input: ApplicationInput): string;
   updateApplication(id: string, input: ApplicationInput): void;
   changeStage(id: string, stage: ApplicationStage): void;
   addNote(id: string, content: string): void;
   deleteApplication(id: string): void;
+  signInWithEmail(email: string): Promise<void>;
+  signOut(): Promise<void>;
+  syncLocalDataToCloud(): Promise<void>;
+  replaceData(data: JobTrailData): Promise<void>;
 }
 
 const initialData: JobTrailData = { version: 1, applications: [], events: [] };
@@ -28,26 +41,79 @@ function createId() {
 }
 
 export function ApplicationProvider({ children }: { children: React.ReactNode }) {
-  const repository = useMemo(() => new LocalStorageApplicationRepository(), []);
+  const localRepository = useMemo(() => new LocalStorageApplicationRepository(), []);
+  const supabase = useMemo(() => createSupabaseBrowserClient(), []);
+  const [user, setUser] = useState<{ id: string; email?: string } | null>(null);
   const [data, setData] = useState<JobTrailData>(initialData);
   const [hydrated, setHydrated] = useState(false);
+  const [authMessage, setAuthMessage] = useState<string | null>(null);
   const dataRef = useRef(data);
+  const repositoryRef = useRef<ApplicationRepository>(localRepository);
+
+  const cloudRepository = useMemo(
+    () => (supabase && user ? new SupabaseApplicationRepository(supabase, user.id) : null),
+    [supabase, user],
+  );
+  const activeRepository = cloudRepository ?? localRepository;
+  const dataSource = cloudRepository ? "supabase" : "local";
 
   useEffect(() => {
-    const hydrationTask = window.setTimeout(() => {
-      const loaded = repository.load();
-      dataRef.current = loaded;
-      setData(loaded);
-      setHydrated(true);
-    }, 0);
-    return () => window.clearTimeout(hydrationTask);
-  }, [repository]);
+    if (!supabase) return;
+
+    let mounted = true;
+    supabase.auth.getUser().then(({ data: authData }) => {
+      if (!mounted) return;
+      setUser(authData.user ? { id: authData.user.id, email: authData.user.email } : null);
+    });
+
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ? { id: session.user.id, email: session.user.email } : null);
+    });
+
+    return () => {
+      mounted = false;
+      listener.subscription.unsubscribe();
+    };
+  }, [supabase]);
+
+  useEffect(() => {
+    let mounted = true;
+    repositoryRef.current = activeRepository;
+
+    activeRepository
+      .load()
+      .then((loaded) => {
+        if (!mounted) return;
+        dataRef.current = loaded;
+        setData(loaded);
+        setHydrated(true);
+      })
+      .catch((error) => {
+        if (!mounted) return;
+        console.error(error);
+        setAuthMessage("云端数据读取失败，已暂时切回本地数据。");
+        localRepository.load().then((loaded) => {
+          if (!mounted) return;
+          repositoryRef.current = localRepository;
+          dataRef.current = loaded;
+          setData(loaded);
+          setHydrated(true);
+        });
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, [activeRepository, localRepository]);
 
   function commit(updater: (current: JobTrailData) => JobTrailData) {
     const next = updater(dataRef.current);
     dataRef.current = next;
     setData(next);
-    repository.save(next);
+    repositoryRef.current.save(next).catch((error) => {
+      console.error(error);
+      setAuthMessage("数据保存失败，请稍后重试。");
+    });
   }
 
   function createApplication(input: ApplicationInput) {
@@ -124,16 +190,75 @@ export function ApplicationProvider({ children }: { children: React.ReactNode })
     }));
   }
 
+  async function signInWithEmail(email: string) {
+    if (!supabase) {
+      setAuthMessage("还没有配置 Supabase，当前使用本地模式。");
+      return;
+    }
+
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: {
+        emailRedirectTo: typeof window === "undefined" ? undefined : window.location.origin,
+      },
+    });
+
+    if (error) {
+      setAuthMessage(error.message);
+      return;
+    }
+
+    setAuthMessage("登录链接已发送，请打开邮箱完成登录。");
+  }
+
+  async function signOut() {
+    if (!supabase) return;
+    const { error } = await supabase.auth.signOut();
+    if (error) {
+      setAuthMessage(error.message);
+      return;
+    }
+    setAuthMessage("已退出登录，当前显示本地数据。");
+  }
+
+  async function syncLocalDataToCloud() {
+    if (!cloudRepository) {
+      setAuthMessage("登录后才能同步本机数据到云端。");
+      return;
+    }
+
+    const localData = await localRepository.load();
+    await cloudRepository.save(localData);
+    dataRef.current = localData;
+    setData(localData);
+    setAuthMessage("本机数据已同步到云端。");
+  }
+
+  async function replaceData(next: JobTrailData) {
+    dataRef.current = next;
+    setData(next);
+    await repositoryRef.current.save(next);
+    setAuthMessage("备份数据已恢复。");
+  }
+
   return (
     <ApplicationContext.Provider
       value={{
         ...data,
         hydrated,
+        authMessage,
+        dataSource,
+        isSupabaseConfigured: Boolean(supabase),
+        userEmail: user?.email ?? null,
         createApplication,
         updateApplication,
         changeStage,
         addNote,
         deleteApplication,
+        signInWithEmail,
+        signOut,
+        syncLocalDataToCloud,
+        replaceData,
       }}
     >
       {children}
