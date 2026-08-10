@@ -15,7 +15,9 @@ const formSchema = z.object({
   role: z.string().trim().min(1, "请输入岗位名称").max(80, "岗位名称不能超过 80 个字"),
   currentStage: z.enum([
     "wishlist", "applied", "assessment", "interview_ready", "interview_1", "interview_2",
-    "final_interview", "offer", "accepted", "rejected", "withdrawn", "ghosted",
+    "final_interview", "offer", "accepted", "rejected", "rejected_resume", "rejected_assessment",
+    "rejected_interview_1", "rejected_interview_2", "rejected_interview_3", "rejected_hr",
+    "withdrawn", "ghosted",
   ]),
   priority: z.enum(["high", "medium", "low"]),
   appliedAt: z.string(),

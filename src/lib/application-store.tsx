@@ -26,7 +26,7 @@ interface ApplicationContextValue extends JobTrailData {
   changeStage(id: string, stage: ApplicationStage): void;
   addNote(id: string, content: string): void;
   deleteApplication(id: string): void;
-  signInWithEmail(email: string): Promise<void>;
+  signInWithEmail(email: string): Promise<boolean>;
   signOut(): Promise<void>;
   syncLocalDataToCloud(): Promise<void>;
   replaceData(data: JobTrailData): Promise<void>;
@@ -60,14 +60,52 @@ export function ApplicationProvider({ children }: { children: React.ReactNode })
   useEffect(() => {
     if (!supabase) return;
 
+    const supabaseClient = supabase;
     let mounted = true;
-    supabase.auth.getUser().then(({ data: authData }) => {
-      if (!mounted) return;
-      setUser(authData.user ? { id: authData.user.id, email: authData.user.email } : null);
-    });
 
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+    async function initializeAuth() {
+      let authCallbackError: string | null = null;
+
+      if (typeof window !== "undefined") {
+        const url = new URL(window.location.href);
+        const code = url.searchParams.get("code");
+
+        if (code) {
+          const { error } = await supabaseClient.auth.exchangeCodeForSession(code);
+          authCallbackError = error?.message ?? null;
+
+          url.searchParams.delete("code");
+          window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+        }
+      }
+
+      const {
+        data: { session },
+      } = await supabaseClient.auth.getSession();
+      if (!mounted) return;
+      const sessionUser = session?.user ? { id: session.user.id, email: session.user.email } : null;
+      setUser(sessionUser);
+
+      if (sessionUser) {
+        setAuthMessage(null);
+        return;
+      }
+
+      if (authCallbackError) {
+        const isPkceStorageError = authCallbackError.toLowerCase().includes("code verifier");
+        setAuthMessage(
+          isPkceStorageError
+            ? "登录链接没有在同一个浏览器里完成校验。请回到刚才发送邮件的这个浏览器重新发送登录链接，并打开最新邮件；如果邮箱默认打开了别的浏览器，可以复制链接粘贴到当前浏览器打开。"
+            : `登录链接处理失败：${authCallbackError}`,
+        );
+      }
+    }
+
+    void initializeAuth();
+
+    const { data: listener } = supabaseClient.auth.onAuthStateChange((event, session) => {
       setUser(session?.user ? { id: session.user.id, email: session.user.email } : null);
+      if (event === "SIGNED_IN") setAuthMessage(null);
     });
 
     return () => {
@@ -193,7 +231,7 @@ export function ApplicationProvider({ children }: { children: React.ReactNode })
   async function signInWithEmail(email: string) {
     if (!supabase) {
       setAuthMessage("还没有配置 Supabase，当前使用本地模式。");
-      return;
+      return false;
     }
 
     const { error } = await supabase.auth.signInWithOtp({
@@ -205,10 +243,11 @@ export function ApplicationProvider({ children }: { children: React.ReactNode })
 
     if (error) {
       setAuthMessage(error.message);
-      return;
+      return false;
     }
 
     setAuthMessage("登录链接已发送，请打开邮箱完成登录。");
+    return true;
   }
 
   async function signOut() {
@@ -227,11 +266,17 @@ export function ApplicationProvider({ children }: { children: React.ReactNode })
       return;
     }
 
-    const localData = await localRepository.load();
-    await cloudRepository.save(localData);
-    dataRef.current = localData;
-    setData(localData);
-    setAuthMessage("本机数据已同步到云端。");
+    try {
+      setAuthMessage("正在同步本机数据到云端…");
+      const localData = await localRepository.load();
+      await cloudRepository.save(localData);
+      dataRef.current = localData;
+      setData(localData);
+      setAuthMessage("本机数据已同步到云端。");
+    } catch (error) {
+      console.error(error);
+      setAuthMessage(error instanceof Error ? `同步失败：${error.message}` : "同步失败，请稍后重试。");
+    }
   }
 
   async function replaceData(next: JobTrailData) {

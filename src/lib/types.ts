@@ -9,6 +9,12 @@ export const applicationStages = [
   "offer",
   "accepted",
   "rejected",
+  "rejected_resume",
+  "rejected_assessment",
+  "rejected_interview_1",
+  "rejected_interview_2",
+  "rejected_interview_3",
+  "rejected_hr",
   "withdrawn",
   "ghosted",
 ] as const;
