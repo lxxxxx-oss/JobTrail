@@ -9,6 +9,41 @@ function workbookBuffer(rows: Record<string, unknown>[]) {
   return XLSX.write(workbook, { bookType: "xlsx", type: "array" }) as ArrayBuffer;
 }
 
+function jobTrailExportBuffer() {
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(
+    workbook,
+    XLSX.utils.json_to_sheet([
+      {
+        公司: "Teamily AI",
+        岗位: "AI 评测工程师",
+        当前阶段: "一面挂",
+        优先级: "中优先",
+        投递日期: "2026-08-09",
+        创建时间: "2026/08/24 12:37",
+        更新时间: "2026/08/24 12:37",
+      },
+    ]),
+    "投递记录",
+  );
+  XLSX.utils.book_append_sheet(
+    workbook,
+    XLSX.utils.json_to_sheet([
+      {
+        公司: "Teamily AI",
+        岗位: "AI 评测工程师",
+        事件类型: "阶段变更",
+        原阶段: "一面",
+        新阶段: "一面挂",
+        内容: "",
+        发生时间: "2026/08/24 12:37",
+      },
+    ]),
+    "进展时间线",
+  );
+  return XLSX.write(workbook, { bookType: "xlsx", type: "array" }) as ArrayBuffer;
+}
+
 describe("parseApplicationsExcelArrayBuffer", () => {
   it("识别中文列名并转换为投递输入", async () => {
     const preview = await parseApplicationsExcelArrayBuffer(
@@ -71,6 +106,24 @@ describe("parseApplicationsExcelArrayBuffer", () => {
     );
 
     expect(preview.rows[0].input.currentStage).toBe("rejected_interview_1");
+  });
+
+  it("识别 JobTrail 导出的 Excel 并构建完整恢复数据", async () => {
+    const preview = await parseApplicationsExcelArrayBuffer(jobTrailExportBuffer());
+
+    expect(preview.restoreData?.applications).toHaveLength(1);
+    expect(preview.restoreData?.events).toHaveLength(1);
+    expect(preview.restoreData?.applications[0]).toMatchObject({
+      company: "Teamily AI",
+      role: "AI 评测工程师",
+      currentStage: "rejected_interview_1",
+      appliedAt: "2026-08-09",
+    });
+    expect(preview.restoreData?.events[0]).toMatchObject({
+      type: "stage_changed",
+      fromStage: "interview_1",
+      toStage: "rejected_interview_1",
+    });
   });
 
   it("跳过缺少公司或岗位的行", async () => {

@@ -94,10 +94,20 @@ export function BoardView({ onCreate, onSelect }: { onCreate(): void; onSelect(i
     }
   }
 
-  function handleConfirmExcelImport() {
+  async function handleConfirmExcelImport() {
     if (!importPreview) return;
-    importPreview.rows.forEach((row) => createApplication(row.input));
-    setToolbarFeedback({ type: "success", text: `已追加导入 ${importPreview.rows.length} 条投递记录。` });
+
+    if (importPreview.restoreData) {
+      await replaceData(importPreview.restoreData);
+      setToolbarFeedback({
+        type: "success",
+        text: `已从 Excel 恢复 ${importPreview.restoreData.applications.length} 条投递和 ${importPreview.restoreData.events.length} 条时间线。`,
+      });
+    } else {
+      importPreview.rows.forEach((row) => createApplication(row.input));
+      setToolbarFeedback({ type: "success", text: `已追加导入 ${importPreview.rows.length} 条投递记录。` });
+    }
+
     setImportPreview(null);
   }
 
@@ -250,11 +260,17 @@ export function BoardView({ onCreate, onSelect }: { onCreate(): void; onSelect(i
             <div className="form-body import-body">
               <div className="import-summary">
                 <strong>{importPreview.rows.length}</strong>
-                <span>条可导入记录</span>
+                <span>{importPreview.restoreData ? "条可恢复记录" : "条可导入记录"}</span>
                 <em>工作表：{importPreview.sheetName}</em>
               </div>
 
-              {duplicateImportCount > 0 && (
+              {importPreview.restoreData && (
+                <p className="import-warning">
+                  检测到这是 JobTrail 导出的完整 Excel 备份，将恢复 {importPreview.restoreData.applications.length} 条投递和 {importPreview.restoredEventCount ?? 0} 条时间线。确认后会覆盖当前本地数据，请确保这是你要恢复的那份文件。
+                </p>
+              )}
+
+              {!importPreview.restoreData && duplicateImportCount > 0 && (
                 <p className="import-warning">
                   发现 {duplicateImportCount} 条疑似重复记录（同公司 + 同岗位）。确认后仍会追加导入，不会覆盖现有记录。
                 </p>
@@ -300,7 +316,9 @@ export function BoardView({ onCreate, onSelect }: { onCreate(): void; onSelect(i
             </div>
             <footer className="modal-footer">
               <button type="button" className="secondary-button" onClick={() => setImportPreview(null)}>取消</button>
-              <button type="button" className="primary-button" onClick={handleConfirmExcelImport}>确认追加 {importPreview.rows.length} 条</button>
+              <button type="button" className="primary-button" onClick={() => void handleConfirmExcelImport()}>
+                {importPreview.restoreData ? `确认恢复 ${importPreview.rows.length} 条到本地` : `确认追加 ${importPreview.rows.length} 条`}
+              </button>
             </footer>
           </section>
         </div>

@@ -1,9 +1,20 @@
+import type { WorkBook } from "xlsx";
 import { priorityLabels, stageDefinitions } from "./stages";
-import { applicationStages, type Application, type ApplicationInput, type ApplicationStage, type Priority } from "./types";
+import {
+  applicationStages,
+  type Application,
+  type ApplicationEvent,
+  type ApplicationInput,
+  type ApplicationStage,
+  type JobTrailData,
+  type Priority,
+} from "./types";
 
 export interface ImportedApplicationRow {
   rowNumber: number;
   input: ApplicationInput;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface SkippedImportRow {
@@ -16,6 +27,8 @@ export interface ApplicationImportPreview {
   totalRows: number;
   rows: ImportedApplicationRow[];
   skippedRows: SkippedImportRow[];
+  restoreData?: JobTrailData;
+  restoredEventCount?: number;
 }
 
 type SpreadsheetRow = Record<string, unknown>;
@@ -35,6 +48,21 @@ const fieldAliases = {
   nextActionAt: ["行动时间", "下一步时间", "待办时间", "next action at", "todo at"],
   notes: ["备注", "笔记", "说明", "notes", "note", "remark"],
 } satisfies Record<keyof ApplicationInput, string[]>;
+
+const metadataAliases = {
+  createdAt: ["创建时间", "created at", "created"],
+  updatedAt: ["更新时间", "updated at", "updated"],
+};
+
+const eventAliases = {
+  company: ["公司", "company"],
+  role: ["岗位", "职位", "role", "title", "job title", "position"],
+  type: ["事件类型", "类型", "event type", "type"],
+  fromStage: ["原阶段", "from stage", "from"],
+  toStage: ["新阶段", "to stage", "to"],
+  content: ["内容", "备注", "content", "note"],
+  occurredAt: ["发生时间", "时间", "occurred at", "time"],
+};
 
 const stageAliases: Record<ApplicationStage, string[]> = {
   wishlist: ["待投递", "收藏", "想投", "wishlist", "todo"],
@@ -108,6 +136,8 @@ export async function parseApplicationsExcelArrayBuffer(arrayBuffer: ArrayBuffer
         nextActionAt: parseDateTime(pickValue(row, fieldAliases.nextActionAt), XLSX),
         notes: optionalLimitedString(pickString(row, fieldAliases.notes), 2000),
       },
+      createdAt: parseDateTime(pickValue(row, metadataAliases.createdAt), XLSX),
+      updatedAt: parseDateTime(pickValue(row, metadataAliases.updatedAt), XLSX),
     });
   });
 
@@ -115,16 +145,93 @@ export async function parseApplicationsExcelArrayBuffer(arrayBuffer: ArrayBuffer
     throw new Error("没有识别到可导入的投递记录。请至少提供“公司”和“岗位”两列。");
   }
 
+  const restoreData = buildRestoreDataFromWorkbook(workbook, importedRows, XLSX);
+
   return {
     sheetName,
     totalRows: rows.filter((row) => !isBlankRow(row)).length,
     rows: importedRows,
     skippedRows,
+    restoreData,
+    restoredEventCount: restoreData?.events.length,
   };
 }
 
 export function buildApplicationDuplicateKey(application: Pick<Application, "company" | "role">) {
   return `${normalizeValue(application.company)}::${normalizeValue(application.role)}`;
+}
+
+function buildRestoreDataFromWorkbook(
+  workbook: WorkBook,
+  importedRows: ImportedApplicationRow[],
+  XLSX: XlsxModule,
+): JobTrailData | undefined {
+  const eventSheetName = workbook.SheetNames.find((name) => normalizeValue(name).includes("进展时间线"));
+  if (!eventSheetName) return undefined;
+
+  const now = new Date().toISOString();
+  const applications = importedRows.map((row, index): Application => {
+    const createdAt = row.createdAt ?? row.updatedAt ?? now;
+    return {
+      ...row.input,
+      id: buildStableApplicationId(row, index),
+      createdAt,
+      updatedAt: row.updatedAt ?? createdAt,
+    };
+  });
+  const applicationsByKey = new Map(applications.map((application) => [buildApplicationDuplicateKey(application), application]));
+  const eventRows = XLSX.utils.sheet_to_json<SpreadsheetRow>(workbook.Sheets[eventSheetName], { defval: "", raw: true });
+  const events: ApplicationEvent[] = [];
+
+  eventRows.forEach((row, index) => {
+    if (isBlankRow(row)) return;
+
+    const company = pickString(row, eventAliases.company);
+    const role = pickString(row, eventAliases.role);
+    const application = applicationsByKey.get(buildApplicationDuplicateKey({ company, role }));
+    if (!application) return;
+
+    const type = parseEventType(pickString(row, eventAliases.type));
+    const fromStage = parseOptionalStage(pickString(row, eventAliases.fromStage));
+    const toStage = parseOptionalStage(pickString(row, eventAliases.toStage));
+    const content = optionalLimitedString(pickString(row, eventAliases.content), 2000);
+    const occurredAt = parseDateTime(pickValue(row, eventAliases.occurredAt), XLSX) ?? application.createdAt;
+
+    events.push({
+      id: `excel-event-${index + 2}-${application.id}`,
+      applicationId: application.id,
+      type,
+      fromStage,
+      toStage,
+      content,
+      occurredAt,
+    });
+  });
+
+  return {
+    version: 1,
+    applications,
+    events: events.length ? events : buildCreatedEvents(applications),
+  };
+}
+
+function buildCreatedEvents(applications: Application[]): ApplicationEvent[] {
+  return applications.map((application) => ({
+    id: `excel-event-created-${application.id}`,
+    applicationId: application.id,
+    type: "created",
+    toStage: application.currentStage,
+    occurredAt: application.createdAt,
+  }));
+}
+
+function buildStableApplicationId(row: ImportedApplicationRow, index: number) {
+  const source = `${index + 1}-${row.input.company}-${row.input.role}`;
+  const slug = Array.from(source)
+    .map((character) => character.codePointAt(0)?.toString(36) ?? "")
+    .join("")
+    .slice(0, 80);
+  return `excel-app-${slug}`;
 }
 
 function isBlankRow(row: SpreadsheetRow) {
@@ -177,6 +284,20 @@ function parseStage(value: string): ApplicationStage {
     aliases.some((alias) => normalizeValue(alias) === normalized),
   );
   return (matched?.[0] as ApplicationStage | undefined) ?? "applied";
+}
+
+function parseOptionalStage(value: string): ApplicationStage | undefined {
+  return value.trim() ? parseStage(value) : undefined;
+}
+
+function parseEventType(value: string): ApplicationEvent["type"] {
+  const normalized = normalizeValue(value);
+
+  if (["阶段变更", "阶段变化", "推进", "stagechanged", "stagechange"].includes(normalized)) {
+    return "stage_changed";
+  }
+  if (["补充记录", "备注", "笔记", "note"].includes(normalized)) return "note";
+  return "created";
 }
 
 function parsePriority(value: string): Priority {

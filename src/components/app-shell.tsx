@@ -1,7 +1,7 @@
 "use client";
 
-import { AuthStatus } from "./auth-status";
 import { BoardIcon, PlusIcon, SunIcon } from "./icons";
+import { LocalSaveStatus } from "./local-save-status";
 
 interface AppShellProps {
   view: "today" | "board";
@@ -31,7 +31,7 @@ export function AppShell({ view, onViewChange, onCreate, children }: AppShellPro
           </button>
         </nav>
 
-        <AuthStatus />
+        <LocalSaveStatus />
       </header>
 
       <main>{children}</main>
